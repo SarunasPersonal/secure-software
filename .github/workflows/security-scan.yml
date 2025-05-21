@@ -12,10 +12,10 @@ jobs:
   security-scan:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.10'
     
@@ -45,7 +45,7 @@ jobs:
     
     # Upload security scan results as artifacts
     - name: Upload security scan results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: security-scan-results
         path: |
@@ -55,12 +55,12 @@ jobs:
     
     # GitHub CodeQL Analysis
     - name: Initialize CodeQL
-      uses: github/codeql-action/init@v2
+      uses: github/codeql-action/init@v3
       with:
         languages: python
     
     - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v2
+      uses: github/codeql-action/analyze@v3
     
     # Create a Python script to convert Bandit output to SARIF format
     - name: Create SARIF conversion script
@@ -160,7 +160,7 @@ jobs:
       run: python bandit_to_sarif.py
     
     - name: Upload SARIF file to GitHub
-      uses: github/codeql-action/upload-sarif@v2
+      uses: github/codeql-action/upload-sarif@v3
       if: success() || failure() # Run regardless of previous steps
       with:
         sarif_file: bandit-results.sarif
