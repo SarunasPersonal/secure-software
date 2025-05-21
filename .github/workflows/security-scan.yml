@@ -62,13 +62,102 @@ jobs:
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v2
     
-    # Add SARIF upload (for integration with GitHub Security)
-    - name: Convert Bandit to SARIF
-      uses: advanced-security/bandit-sarif-export@main
+    # Create a Python script to convert Bandit output to SARIF format
+    - name: Create SARIF conversion script
+      run: |
+        cat > bandit_to_sarif.py << 'EOF'
+        import json
+        import sys
+        import os
+        from datetime import datetime
+
+        # Read bandit JSON output
+        try:
+            with open('bandit-results.json', 'r') as f:
+                bandit_data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"Error reading bandit results: {e}")
+            sys.exit(1)
+
+        # Create SARIF structure
+        sarif_output = {
+            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+            "version": "2.1.0",
+            "runs": [
+                {
+                    "tool": {
+                        "driver": {
+                            "name": "Bandit",
+                            "informationUri": "https://github.com/PyCQA/bandit",
+                            "semanticVersion": bandit_data.get("metadata", {}).get("version", ""),
+                            "rules": []
+                        }
+                    },
+                    "results": [],
+                    "invocations": [
+                        {
+                            "executionSuccessful": True,
+                            "endTimeUtc": datetime.utcnow().isoformat() + "Z"
+                        }
+                    ]
+                }
+            ]
+        }
+
+        # Add rules and results
+        rule_indices = {}
+        for result in bandit_data.get("results", []):
+            issue_id = result.get("test_id", "")
+            issue_name = result.get("test_name", "")
+            
+            # Create rule if not exists
+            if issue_id not in rule_indices:
+                rule = {
+                    "id": issue_id,
+                    "name": issue_name,
+                    "shortDescription": {
+                        "text": issue_name
+                    },
+                    "helpUri": f"https://bandit.readthedocs.io/en/latest/plugins/index.html#{issue_id.lower()}"
+                }
+                sarif_output["runs"][0]["tool"]["driver"]["rules"].append(rule)
+                rule_indices[issue_id] = len(sarif_output["runs"][0]["tool"]["driver"]["rules"]) - 1
+            
+            # Add result
+            sarif_result = {
+                "ruleId": issue_id,
+                "ruleIndex": rule_indices[issue_id],
+                "level": "warning" if result.get("issue_severity", "") == "MEDIUM" else 
+                          "error" if result.get("issue_severity", "") == "HIGH" else "note",
+                "message": {
+                    "text": result.get("issue_text", "")
+                },
+                "locations": [
+                    {
+                        "physicalLocation": {
+                            "artifactLocation": {
+                                "uri": result.get("filename", "").replace(os.getcwd() + "/", "")
+                            },
+                            "region": {
+                                "startLine": result.get("line_number", 0),
+                                "startColumn": 1
+                            }
+                        }
+                    }
+                ]
+            }
+            sarif_output["runs"][0]["results"].append(sarif_result)
+
+        # Write SARIF output
+        with open("bandit-results.sarif", "w") as f:
+            json.dump(sarif_output, f, indent=2)
+        
+        print("Conversion to SARIF format completed successfully")
+        EOF
+
+    - name: Convert Bandit results to SARIF
       if: success() || failure() # Run regardless of previous steps
-      with:
-        input: bandit-results.json
-        output: bandit-results.sarif
+      run: python bandit_to_sarif.py
     
     - name: Upload SARIF file to GitHub
       uses: github/codeql-action/upload-sarif@v2

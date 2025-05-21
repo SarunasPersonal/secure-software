@@ -2,15 +2,25 @@ import unittest
 import json
 import os
 import tempfile
+import sqlite3
 from app import app, init_db
 
 class AppTestCase(unittest.TestCase):
     def setUp(self):
+        # Create a temporary file for the test database
         self.db_fd, app.config['DATABASE'] = tempfile.mkstemp()
         app.config['TESTING'] = True
         self.client = app.test_client()
-        with app.app_context():
-            init_db()
+        
+        # Initialize the database
+        init_db()
+        
+        # Clear any existing data to ensure a clean test environment
+        conn = sqlite3.connect(app.config['DATABASE'])
+        conn.execute("DELETE FROM users")
+        conn.execute("DELETE FROM notes")
+        conn.commit()
+        conn.close()
 
     def tearDown(self):
         os.close(self.db_fd)
@@ -26,6 +36,7 @@ class AppTestCase(unittest.TestCase):
             content_type='application/json'
         )
         data = json.loads(response.data)
+        print(f"Register response: {response.status_code}, {data}")
         self.assertEqual(response.status_code, 201)
         self.assertEqual(data['message'], 'User registered successfully')
         self.assertIn('token', data)
@@ -118,6 +129,8 @@ class AppTestCase(unittest.TestCase):
             content_type='application/json'
         )
         register_data = json.loads(register_response.data)
+        print(f"Register response in test_create_and_get_note_with_auth: {register_response.status_code}, {register_data}")
+        self.assertIn('token', register_data, "Token missing in registration response")
         token = register_data['token']
         
         # Create a note
@@ -156,6 +169,8 @@ class AppTestCase(unittest.TestCase):
             content_type='application/json'
         )
         register_data = json.loads(register_response.data)
+        print(f"Register response in test_xss_prevention: {register_response.status_code}, {register_data}")
+        self.assertIn('token', register_data, "Token missing in registration response")
         token = register_data['token']
         
         # Create a note with XSS payload

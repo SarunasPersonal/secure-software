@@ -3,7 +3,7 @@ import re
 import uuid
 import hashlib
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 
 from flask import Flask, request, jsonify, make_response
 import jwt
@@ -29,7 +29,7 @@ app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', str(uuid.uuid4()))
 
 # Database setup
 def get_db_connection():
-    conn = sqlite3.connect('database.db')
+    conn = sqlite3.connect('database.db' if not app.config.get('TESTING', False) else app.config['DATABASE'])
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -118,11 +118,11 @@ def validate_password(password):
 # JWT token generation and validation
 def generate_token(username):
     # Set token expiration time
-    expiration = datetime.utcnow() + timedelta(hours=1)
+    expiration = datetime.now(UTC) + timedelta(hours=1)
     # Create payload
     payload = {
         'exp': expiration,
-        'iat': datetime.utcnow(),
+        'iat': datetime.now(UTC),
         'sub': username
     }
     # Create JWT token
@@ -194,7 +194,13 @@ def register():
         # Generate token
         token = generate_token(username)
         
-        return jsonify({'message': 'User registered successfully', 'token': token}), 201
+        # Create a response with the token
+        response_data = {
+            'message': 'User registered successfully',
+            'token': token
+        }
+        
+        return jsonify(response_data), 201
     
     except Exception as e:
         conn.close()
@@ -230,7 +236,13 @@ def login():
         # Generate token
         token = generate_token(username)
         
-        return jsonify({'message': 'Login successful', 'token': token}), 200
+        # Create a response with the token
+        response_data = {
+            'message': 'Login successful',
+            'token': token
+        }
+        
+        return jsonify(response_data), 200
     
     except Exception as e:
         if not conn.closed:
