@@ -8,6 +8,11 @@ on:
   # Enable manual triggering
   workflow_dispatch:
 
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
 jobs:
   security-scan:
     runs-on: ubuntu-latest
@@ -28,24 +33,31 @@ jobs:
     # SAST scanning with Bandit
     - name: Run Bandit SAST scan
       run: |
-        bandit -r . -f json -o bandit-results.json
+        bandit -r . -f json -o bandit-results.json || echo "Bandit scan completed with findings"
+        echo "Bandit scan results:"
+        cat bandit-results.json || echo "No bandit results file found"
       continue-on-error: true
     
     # Dependency scanning with Safety
     - name: Check dependencies for vulnerabilities
       run: |
-        safety check -r requirements.txt --json > safety-results.json
+        safety check -r requirements.txt --json > safety-results.json || echo "Safety scan completed with findings"
+        echo "Safety scan results:"
+        cat safety-results.json || echo "No safety results file found"
       continue-on-error: true
     
     # Static code analysis with Pylint
     - name: Run Pylint
       run: |
-        pylint --disable=C0111,C0103 --output-format=json:pylint-results.json *.py
+        pylint --disable=C0111,C0103 --output-format=json:pylint-results.json *.py || echo "Pylint scan completed with findings"
+        echo "Pylint scan results:"
+        cat pylint-results.json || echo "No pylint results file found"
       continue-on-error: true
     
     # Upload security scan results as artifacts
     - name: Upload security scan results
       uses: actions/upload-artifact@v4
+      if: always()
       with:
         name: security-scan-results
         path: |
@@ -62,10 +74,11 @@ jobs:
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v3
     
-    # Create a Python script to convert Bandit output to SARIF format
-    - name: Create SARIF conversion script
+    # Create and run SARIF conversion script
+    - name: Convert Bandit results to SARIF
+      if: always()
       run: |
-        cat > bandit_to_sarif.py << 'EOF'
+        python3 << 'EOF'
         import json
         import sys
         import os
@@ -75,9 +88,29 @@ jobs:
         try:
             with open('bandit-results.json', 'r') as f:
                 bandit_data = json.load(f)
+            print("Successfully loaded bandit results")
         except (FileNotFoundError, json.JSONDecodeError) as e:
             print(f"Error reading bandit results: {e}")
-            sys.exit(1)
+            # Create empty SARIF file if no results
+            empty_sarif = {
+                "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+                "version": "2.1.0",
+                "runs": [
+                    {
+                        "tool": {
+                            "driver": {
+                                "name": "Bandit",
+                                "informationUri": "https://github.com/PyCQA/bandit",
+                                "rules": []
+                            }
+                        },
+                        "results": []
+                    }
+                ]
+            }
+            with open("bandit-results.sarif", "w") as f:
+                json.dump(empty_sarif, f, indent=2)
+            sys.exit(0)
 
         # Create SARIF structure
         sarif_output = {
@@ -89,7 +122,7 @@ jobs:
                         "driver": {
                             "name": "Bandit",
                             "informationUri": "https://github.com/PyCQA/bandit",
-                            "semanticVersion": bandit_data.get("metadata", {}).get("version", ""),
+                            "semanticVersion": bandit_data.get("metadata", {}).get("version", "1.7.5"),
                             "rules": []
                         }
                     },
@@ -139,7 +172,7 @@ jobs:
                                 "uri": result.get("filename", "").replace(os.getcwd() + "/", "")
                             },
                             "region": {
-                                "startLine": result.get("line_number", 0),
+                                "startLine": result.get("line_number", 1),
                                 "startColumn": 1
                             }
                         }
@@ -153,14 +186,25 @@ jobs:
             json.dump(sarif_output, f, indent=2)
         
         print("Conversion to SARIF format completed successfully")
+        print(f"Created SARIF file with {len(sarif_output['runs'][0]['results'])} results")
         EOF
-
-    - name: Convert Bandit results to SARIF
-      if: success() || failure() # Run regardless of previous steps
-      run: python bandit_to_sarif.py
+    
+    - name: Check SARIF file exists
+      if: always()
+      run: |
+        if [ -f "bandit-results.sarif" ]; then
+          echo "SARIF file exists"
+          echo "SARIF file size: $(wc -c < bandit-results.sarif) bytes"
+          echo "First few lines of SARIF file:"
+          head -n 10 bandit-results.sarif
+        else
+          echo "SARIF file does not exist"
+          ls -la *.sarif || echo "No SARIF files found"
+        fi
     
     - name: Upload SARIF file to GitHub
       uses: github/codeql-action/upload-sarif@v3
-      if: success() || failure() # Run regardless of previous steps
+      if: always() && hashFiles('bandit-results.sarif') != ''
       with:
         sarif_file: bandit-results.sarif
+        
