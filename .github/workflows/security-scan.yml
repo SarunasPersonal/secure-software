@@ -1,0 +1,77 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  # Enable manual triggering
+  workflow_dispatch:
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install bandit safety pylint
+    
+    # SAST scanning with Bandit
+    - name: Run Bandit SAST scan
+      run: |
+        bandit -r . -f json -o bandit-results.json
+      continue-on-error: true
+    
+    # Dependency scanning with Safety
+    - name: Check dependencies for vulnerabilities
+      run: |
+        safety check -r requirements.txt --json > safety-results.json
+      continue-on-error: true
+    
+    # Static code analysis with Pylint
+    - name: Run Pylint
+      run: |
+        pylint --disable=C0111,C0103 --output-format=json:pylint-results.json *.py
+      continue-on-error: true
+    
+    # Upload security scan results as artifacts
+    - name: Upload security scan results
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-scan-results
+        path: |
+          bandit-results.json
+          safety-results.json
+          pylint-results.json
+    
+    # GitHub CodeQL Analysis
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v2
+      with:
+        languages: python
+    
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v2
+    
+    # Add SARIF upload (for integration with GitHub Security)
+    - name: Convert Bandit to SARIF
+      uses: advanced-security/bandit-sarif-export@main
+      if: success() || failure() # Run regardless of previous steps
+      with:
+        input: bandit-results.json
+        output: bandit-results.sarif
+    
+    - name: Upload SARIF file to GitHub
+      uses: github/codeql-action/upload-sarif@v2
+      if: success() || failure() # Run regardless of previous steps
+      with:
+        sarif_file: bandit-results.sarif
